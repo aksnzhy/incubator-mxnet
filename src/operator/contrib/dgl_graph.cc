@@ -483,6 +483,8 @@ static void GetUniformSample(const dgl_id_t* val_list,
     return;
   }
   // If we just sample a small number of elements from a large neighbor list.
+  const dgl_id_t* col_ptr = col_list + *(indptr + dst_id);
+  const dgl_id_t* val_ptr = val_list + *(indptr + dst_id);
   std::vector<size_t> sorted_idxs;
   if (ver_len > max_num_neighbor * 2) {
     sorted_idxs.reserve(max_num_neighbor);
@@ -502,8 +504,8 @@ static void GetUniformSample(const dgl_id_t* val_list,
     CHECK_GT(sorted_idxs[i], sorted_idxs[i - 1]);
   }
   for (auto idx : sorted_idxs) {
-    out_ver->push_back(col_list[idx + *(indptr+dst_id)]);
-    out_edge->push_back(val_list[idx + *(indptr+dst_id)]);
+    out_ver->push_back(col_ptr[idx]);
+    out_edge->push_back(val_ptr[idx]);
   }
 }
 
@@ -529,10 +531,12 @@ static void GetNonUniformSample(const float* probability,
     return;
   }
   // Make sample
+  const dgl_id_t* col_ptr = col_list + *(indptr + dst_id);
+  const dgl_id_t* val_ptr = val_list + *(indptr + dst_id);
   std::vector<size_t> sp_index(max_num_neighbor);
   std::vector<float> sp_prob(ver_len);
   for (size_t i = 0; i < ver_len; ++i) {
-    sp_prob[i] = probability[col_list[*(indptr+dst_id)+i]];
+    sp_prob[i] = probability[col_ptr[i]];
   }
   ArrayHeap arrayHeap(sp_prob);
   arrayHeap.SampleWithoutReplacement(max_num_neighbor, &sp_index, seed);
@@ -540,8 +544,8 @@ static void GetNonUniformSample(const float* probability,
   out_edge->resize(max_num_neighbor);
   for (size_t i = 0; i < max_num_neighbor; ++i) {
     size_t idx = sp_index[i];
-    out_ver->at(i) = col_list[idx + *(indptr+dst_id)];
-    out_edge->at(i) = val_list[idx + *(indptr+dst_id)];
+    out_ver->at(i) = col_ptr[idx];
+    out_edge->at(i) = val_ptr[idx];
   }
   sort(out_ver->begin(), out_ver->end());
   sort(out_edge->begin(), out_edge->end());
