@@ -447,22 +447,6 @@ static void NegateSet(const std::vector<size_t> &idxs,
 }
 
 /*
- * Get src vertex and edge id for a destination vertex
- */
-/*
-static void GetSrcList(const dgl_id_t* val_list,
-                       const dgl_id_t* col_list,
-                       const dgl_id_t* indptr,
-                       const dgl_id_t dst_id,
-                       std::vector<dgl_id_t>* src_list,
-                       std::vector<dgl_id_t>* edge_list) {
-  for (dgl_id_t i = *(indptr+dst_id); i < *(indptr+dst_id+1); ++i) {
-    src_list->push_back(col_list[i]);
-    edge_list->push_back(val_list[i]);
-  }
-}*/
-
-/*
  * Uniform sample
  */
 static void GetUniformSample(const dgl_id_t* val_list,
