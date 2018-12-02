@@ -592,11 +592,13 @@ static void SampleSubgraph(const NDArray &csr,
   }
   std::vector<dgl_id_t> tmp_sampled_src_list;
   std::vector<dgl_id_t> tmp_sampled_edge_list;
-  std::unordered_map<dgl_id_t, neigh_list> neigh_mp;
+  // ver_id, position
+  std::unordered_map<dgl_id_t, size_t> neigh_pos;
+  std::vector<dgl_id_t> neighbor_list;
   size_t num_edges = 0;
 
   while (!node_queue.empty() &&
-    sub_vertices_count < max_num_vertices ) {
+    sub_vertices_count < max_num_vertices) {
     ver_node& cur_node = node_queue.front();
     dgl_id_t dst_id = cur_node.vertex_id;
     if (cur_node.level < num_hops) {
@@ -627,9 +629,20 @@ static void SampleSubgraph(const NDArray &csr,
                        &tmp_sampled_edge_list,
                        &time_seed);
       }
-      neigh_mp.insert(std::pair<dgl_id_t, neigh_list>(dst_id,
-        neigh_list(tmp_sampled_src_list,
-                   tmp_sampled_edge_list)));
+      CHECK_EQ(tmp_sampled_src_list.size(), 
+               tmp_sampled_edge_list.size());
+      size_t pos = neighbor_list.size();
+      neigh_pos[dst_id] = pos;
+      // First we push the size of neighbor vector
+      neighbor_list.push_back(tmp_sampled_edge_list.size());
+      // Then push the vertices
+      for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+        neighbor_list.push_back(tmp_sampled_src_list[i]);
+      }
+      // Finally we push the edge list
+      for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
+        neighbor_list.push_back(tmp_sampled_edge_list[i]);
+      }
       num_edges += tmp_sampled_src_list.size();
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
       for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
@@ -647,11 +660,9 @@ static void SampleSubgraph(const NDArray &csr,
         node_queue.pop();
         continue;
       }
-      tmp_sampled_src_list.clear();
-      tmp_sampled_edge_list.clear();
-      neigh_mp.insert(std::pair<dgl_id_t, neigh_list>(dst_id,
-        neigh_list(tmp_sampled_src_list,      // empty vector
-                   tmp_sampled_edge_list)));  // empty vector
+      size_t pos = neighbor_list.size();
+      neigh_pos[dst_id] = pos;
+      neighbor_list.push_back(0);
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
     }
     sub_vertices_count++;
@@ -708,16 +719,18 @@ static void SampleSubgraph(const NDArray &csr,
   size_t collected_nedges = 0;
   for (size_t i = 0; i < num_vertices; i++) {
     dgl_id_t dst_id = *(out + i);
-    auto it = neigh_mp.find(dst_id);
-    const auto &edges = it->second.edges;
-    const auto &neighs = it->second.neighs;
-    CHECK_EQ(edges.size(), neighs.size());
-    if (!edges.empty()) {
-      std::copy(edges.begin(), edges.end(), val_list_out + collected_nedges);
-      std::copy(neighs.begin(), neighs.end(), col_list_out + collected_nedges);
-      collected_nedges += edges.size();
+    size_t pos = neigh_pos[dst_id];
+    size_t edge_size = neighbor_list[pos];
+    if (edge_size != 0) {
+      std::copy_n(neighbor_list.begin() + pos + 1, 
+                  edge_size, 
+                  col_list_out + collected_nedges);
+      std::copy_n(neighbor_list.begin() + pos + edge_size + 1, 
+                  edge_size, 
+                  val_list_out + collected_nedges);
+      collected_nedges += edge_size;
     }
-    indptr_out[i+1] = indptr_out[i] + edges.size();
+    indptr_out[i+1] = indptr_out[i] + edge_size;
   }
   for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
