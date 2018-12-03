@@ -595,7 +595,7 @@ static void SampleSubgraph(const NDArray &csr,
   // ver_id, position
   std::unordered_map<dgl_id_t, size_t> neigh_pos;
   std::vector<dgl_id_t> neighbor_list;
-  neighbor_list.reserve((num_neighbor+1)*max_num_vertices);
+  //neighbor_list.reserve((num_neighbor+1)*max_num_vertices);
   size_t num_edges = 0;
 
   while (!node_queue.empty() &&
