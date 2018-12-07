@@ -595,11 +595,12 @@ static void SampleSubgraph(const NDArray &csr,
          sub_vertices_count < max_num_vertices) {
     ver_node& cur_node = node_queue.front();
     dgl_id_t dst_id = cur_node.vertex_id;
+    /*
     auto ret = sub_ver_mp.find(dst_id);
     if (ret != sub_ver_mp.end()) {
       node_queue.pop();
       continue;
-    }
+    }*/
     tmp_sampled_src_list.clear();
     tmp_sampled_edge_list.clear();
     dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
