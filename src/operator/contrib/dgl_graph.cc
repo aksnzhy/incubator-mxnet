@@ -59,7 +59,7 @@ class Timer {
 
   // Get the time duration
   float get() {
-    return (float)duration.count() / 1000;
+    return (float)duration.count();
   }
 
  protected:
@@ -595,7 +595,7 @@ static void SampleSubgraph(const NDArray &csr,
                            dgl_id_t num_neighbor,
                            dgl_id_t max_num_vertices) {
   float sample_time = 0.0;
-  
+
   unsigned int time_seed = time(nullptr);
   size_t num_seeds = seed_arr.shape().Size();
   CHECK_GE(max_num_vertices, num_seeds);
