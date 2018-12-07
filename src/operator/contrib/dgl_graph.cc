@@ -752,6 +752,7 @@ static void SampleSubgraph(const NDArray &csr,
   copy_layer += timer.toc();
 
   timer.reset();
+  timer.tic();
   // Construct sub_csr_graph
   TShape shape_1(1);
   TShape shape_2(1);
