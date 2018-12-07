@@ -46,7 +46,7 @@ class Timer {
   // Reset start time
   void reset() {
     begin = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::microseconds>(begin-begin);
+    duration = std::chrono::duration_cast<std::chrono::nanoseconds>(begin-begin);
   }
 
   // Code start
@@ -56,7 +56,7 @@ class Timer {
 
   // Code end
   float toc() {
-    duration += std::chrono::duration_cast<std::chrono::microseconds>
+    duration += std::chrono::duration_cast<std::chrono::nanoseconds>
               (std::chrono::high_resolution_clock::now()-begin);
     return get();
   }
@@ -68,7 +68,7 @@ class Timer {
 
  protected:
     std::chrono::high_resolution_clock::time_point begin;
-    std::chrono::microseconds duration;
+    std::chrono::nanoseconds duration;
 };
 
 /*
@@ -870,16 +870,17 @@ static void SampleSubgraph(const NDArray &csr,
     indptr_out[i] = indptr_out[i-1];
   }
   copy_sub_csr += timer.toc();
+  
 //--------------------------- Copy sub-csr Time --------------------------------------//
 
-  std::cout << "init time: " << init_time / 1000.0 << "(mill sec)\n";
-  std::cout << "sample time: " << sample_time / 1000.0 << "(mill sec)\n";
-  std::cout << "hash-lookup time: " << hash_lookup_time / 1000.0 << "(mill sec)\n";
-  std::cout << "neighbor_list push time: " << neighbor_list_push_time / 1000.0 << "(mill sec)\n";
-  std::cout << "queue push-pop time: " << queue_time / 1000.0 << "(mill sec)\n";
-  std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 << "(mill sec)\n";
-  std::cout << "copy layer time: " << copy_layer / 1000.0 << "(mill sec)\n";
-  std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 << "(mill sec)\n";
+  std::cout << "init time: " << init_time / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "sample time: " << sample_time / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "hash-lookup time: " << hash_lookup_time / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "neighbor_list push time: " << neighbor_list_push_time / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "queue push-pop time: " << queue_time / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "copy layer time: " << copy_layer / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 / 1000.0 << "(mill sec)\n";
 }
 
 /*
