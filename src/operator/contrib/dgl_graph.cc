@@ -609,7 +609,7 @@ static void SampleSubgraph(const NDArray &csr,
   // <vertex_id, layer_id>
   std::unordered_map<dgl_id_t, int> sub_ver_mp;
   //std::queue<ver_node> node_queue;
-  FastQueue<ver_node> node_queue(2000);
+  FastQueue<ver_node> node_queue(num_seeds*2);
   // add seed vertices
   for (size_t i = 0; i < num_seeds; ++i) {
     ver_node node;
