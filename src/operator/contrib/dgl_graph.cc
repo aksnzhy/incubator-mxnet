@@ -595,7 +595,6 @@ static void SampleSubgraph(const NDArray &csr,
                            dgl_id_t num_neighbor,
                            dgl_id_t max_num_vertices) {
   float init_time = 0.0;
-  float while_time = 0.0;
   float copy_sub_id = 0.0;
   float copy_layer = 0.0;
   float copy_sub_csr = 0.0;
@@ -642,9 +641,6 @@ static void SampleSubgraph(const NDArray &csr,
   init_time += timer.toc();
 //--------------------------- Init Time --------------------------------------//
   
-//--------------------------- While Time --------------------------------------//
-  timer.reset();
-  timer.tic();
   while (!node_queue.empty() &&
     sub_vertices_count < max_num_vertices) {
 
@@ -785,10 +781,11 @@ static void SampleSubgraph(const NDArray &csr,
 //--------------------------- Hash Time --------------------------------------//
     }
     sub_vertices_count++;
+    while_timer.reset();
+    while_timer.tic();
     node_queue.pop();
+    queue_time += while_timer.toc();
   }
-  while_time += timer.toc();
-//--------------------------- While Time --------------------------------------//
 
 //--------------------------- Copy sub-id Time --------------------------------------//
   timer.reset();
@@ -876,11 +873,10 @@ static void SampleSubgraph(const NDArray &csr,
 //--------------------------- Copy sub-csr Time --------------------------------------//
 
   std::cout << "init time: " << init_time / 1000.0 << "(mill sec)\n";
-  std::cout << "while time: " << while_time / 1000.0 << "(mill sec)\n";
-  std::cout << "   sample time: " << sample_time / 1000.0 << "(mill sec)\n";
-  std::cout << "   hash-lookup time: " << hash_lookup_time / 1000.0 << "(mill sec)\n";
-  std::cout << "   neighbor_list push time: " << neighbor_list_push_time / 1000.0 << "(mill sec)\n";
-  std::cout << "   queue push-pop time: " << queue_time / 1000.0 << "(mill sec)\n";
+  std::cout << "sample time: " << sample_time / 1000.0 << "(mill sec)\n";
+  std::cout << "hash-lookup time: " << hash_lookup_time / 1000.0 << "(mill sec)\n";
+  std::cout << "neighbor_list push time: " << neighbor_list_push_time / 1000.0 << "(mill sec)\n";
+  std::cout << "queue push-pop time: " << queue_time / 1000.0 << "(mill sec)\n";
   std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 << "(mill sec)\n";
   std::cout << "copy layer time: " << copy_layer / 1000.0 << "(mill sec)\n";
   std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 << "(mill sec)\n";
