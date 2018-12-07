@@ -46,7 +46,7 @@ class Timer {
   // Reset start time
   void reset() {
     begin = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::microseconds>(begin-begin);
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(begin-begin);
   }
 
   // Code start
@@ -56,7 +56,7 @@ class Timer {
 
   // Code end
   float toc() {
-    duration += std::chrono::duration_cast<std::chrono::microseconds>
+    duration += std::chrono::duration_cast<std::chrono::milliseconds>
               (std::chrono::high_resolution_clock::now()-begin);
     return get();
   }
@@ -68,7 +68,7 @@ class Timer {
 
  protected:
     std::chrono::high_resolution_clock::time_point begin;
-    std::chrono::microseconds duration;
+    std::chrono::milliseconds duration;
 };
 
 /*
