@@ -602,10 +602,12 @@ static void SampleSubgraph(const NDArray &csr,
   float sample_time = 0.0;
   float hash_lookup_time = 0.0;
   float neighbor_list_push_time = 0.0;
+  float queue_time = 0.0;
 
   Timer timer;
   Timer while_timer;
 
+//--------------------------- Init Time --------------------------------------//
   timer.reset();
   timer.tic();
   unsigned int time_seed = time(nullptr);
@@ -638,29 +640,46 @@ static void SampleSubgraph(const NDArray &csr,
   std::vector<dgl_id_t> neighbor_list;
   size_t num_edges = 0;
   init_time += timer.toc();
+//--------------------------- Init Time --------------------------------------//
   
+//--------------------------- While Time --------------------------------------//
   timer.reset();
   timer.tic();
   while (!node_queue.empty() &&
     sub_vertices_count < max_num_vertices) {
+
+//--------------------------- Queue Time --------------------------------------//
+    while_timer.reset();
+    while_timer.tic();
     ver_node& cur_node = node_queue.front();
+    queue_time += while_timer.toc();
+//--------------------------- Queue Time --------------------------------------//
+
     dgl_id_t dst_id = cur_node.vertex_id;
 
+//--------------------------- Hash Time --------------------------------------//
     while_timer.reset();
     while_timer.tic();
     auto ret = sub_ver_mp.find(dst_id);
+    hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
+
     if (ret != sub_ver_mp.end()) {
+//--------------------------- Queue Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
       node_queue.pop();
+      queue_time += while_timer.toc();
+//--------------------------- Queue Time --------------------------------------//
       continue;
     }
-    hash_lookup_time += while_timer.toc();
-
 
     if (cur_node.level < num_hops) {
       tmp_sampled_src_list.clear();
       tmp_sampled_edge_list.clear();
       dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
       
+//--------------------------- Sample Time --------------------------------------//
       while_timer.reset();
       while_timer.tic();
       if (probability == nullptr) {  // uniform-sample
@@ -682,17 +701,21 @@ static void SampleSubgraph(const NDArray &csr,
                        &time_seed);
       }
       sample_time += while_timer.toc();
+//--------------------------- Sample Time --------------------------------------//
 
       CHECK_EQ(tmp_sampled_src_list.size(),
                tmp_sampled_edge_list.size());
       size_t pos = neighbor_list.size();
 
+//--------------------------- Hash Time --------------------------------------//
       while_timer.reset();
       while_timer.tic();
       neigh_pos[dst_id] = pos;
       hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
  
 
+//--------------------------- Vector Push Time --------------------------------------//
       while_timer.reset();
       while_timer.tic();
       // First we push the size of neighbor vector
@@ -706,37 +729,68 @@ static void SampleSubgraph(const NDArray &csr,
         neighbor_list.push_back(tmp_sampled_edge_list[i]);
       }
       neighbor_list_push_time += while_timer.toc();
+//--------------------------- Vector Push Time --------------------------------------//
 
       num_edges += tmp_sampled_src_list.size();
+
+//--------------------------- Hash Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
+      hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
       for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+
+//--------------------------- Hash Time --------------------------------------//
         while_timer.reset();
         while_timer.tic();
         auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
         hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
+
         if (ret == sub_ver_mp.end()) {
           ver_node new_node;
           new_node.vertex_id = tmp_sampled_src_list[i];
           new_node.level = cur_node.level + 1;
+//--------------------------- Queue Time --------------------------------------//
+          while_timer.reset();
+          while_timer.tic();
           node_queue.push(new_node);
+          queue_time += while_timer.toc();
+//--------------------------- Queue Time --------------------------------------//
         }
       }
     } else {  // vertex without any neighbor
       size_t pos = neighbor_list.size();
 
+//--------------------------- Hash Time --------------------------------------//
       while_timer.reset();
       while_timer.tic();
       neigh_pos[dst_id] = pos;
       hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
 
+//--------------------------- Vector Push Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
       neighbor_list.push_back(0);
+      neighbor_list_push_time += while_timer.toc();
+//--------------------------- Vector Push Time --------------------------------------//
+
+//--------------------------- Hash Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
+      hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
     }
     sub_vertices_count++;
     node_queue.pop();
   }
   while_time += timer.toc();
+//--------------------------- While Time --------------------------------------//
 
+//--------------------------- Copy sub-id Time --------------------------------------//
   timer.reset();
   timer.tic();
   // Copy sub_ver_mp to output[0]
@@ -755,7 +809,7 @@ static void SampleSubgraph(const NDArray &csr,
   // number of vertices in the subgraph.
   out[max_num_vertices] = sub_ver_mp.size();
   copy_sub_id += timer.toc();
-
+//--------------------------- Copy sub-id Time --------------------------------------//
 
   // Copy sub_probability
   if (sub_prob != nullptr) {
@@ -769,6 +823,7 @@ static void SampleSubgraph(const NDArray &csr,
     }
   }
 
+//--------------------------- Copy layer Time --------------------------------------//
   timer.reset();
   timer.tic();
   // Copy layer
@@ -781,7 +836,9 @@ static void SampleSubgraph(const NDArray &csr,
     }
   }
   copy_layer += timer.toc();
+//--------------------------- Copy layer Time --------------------------------------//
 
+//--------------------------- Copy sub-csr Time --------------------------------------//
   timer.reset();
   timer.tic();
   // Construct sub_csr_graph
@@ -816,11 +873,14 @@ static void SampleSubgraph(const NDArray &csr,
     indptr_out[i] = indptr_out[i-1];
   }
   copy_sub_csr += timer.toc();
+//--------------------------- Copy sub-csr Time --------------------------------------//
+
   std::cout << "init time: " << init_time / 1000.0 << "(mill sec)\n";
   std::cout << "while time: " << while_time / 1000.0 << "(mill sec)\n";
   std::cout << "   sample time: " << sample_time / 1000.0 << "(mill sec)\n";
   std::cout << "   hash-lookup time: " << hash_lookup_time / 1000.0 << "(mill sec)\n";
   std::cout << "   neighbor_list push time: " << neighbor_list_push_time / 1000.0 << "(mill sec)\n";
+  std::cout << "   queue push-pop time: " << queue_time / 1000.0 << "(mill sec)\n";
   std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 << "(mill sec)\n";
   std::cout << "copy layer time: " << copy_layer / 1000.0 << "(mill sec)\n";
   std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 << "(mill sec)\n";
