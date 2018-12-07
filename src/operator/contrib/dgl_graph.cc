@@ -583,6 +583,7 @@ static void SampleSubgraph(const NDArray &csr,
     node.vertex_id = seed[i];
     node.level = 0;
     node_queue.push(node);
+    sub_ver_mp[node.vertex_id] = node.level;
   }
   std::vector<dgl_id_t> tmp_sampled_src_list;
   std::vector<dgl_id_t> tmp_sampled_edge_list;
@@ -595,8 +596,8 @@ static void SampleSubgraph(const NDArray &csr,
          sub_vertices_count < max_num_vertices) {
     ver_node& cur_node = node_queue.front();
     dgl_id_t dst_id = cur_node.vertex_id;
-    /*
     auto ret = sub_ver_mp.find(dst_id);
+    /*
     if (ret != sub_ver_mp.end()) {
       node_queue.pop();
       continue;
@@ -637,7 +638,7 @@ static void SampleSubgraph(const NDArray &csr,
       neighbor_list.push_back(tmp_sampled_edge_list[i]);
     }
     num_edges += tmp_sampled_src_list.size();
-    sub_ver_mp[cur_node.vertex_id] = cur_node.level;
+    //sub_ver_mp[cur_node.vertex_id] = cur_node.level;
     for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
       auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
       if (ret == sub_ver_mp.end()) {
@@ -650,8 +651,8 @@ static void SampleSubgraph(const NDArray &csr,
           size_t pos = neighbor_list.size();
           neigh_pos[new_node.vertex_id] = pos;
           neighbor_list.push_back(0);
-          sub_ver_mp[new_node.vertex_id] = new_node.level;
         }
+        sub_ver_mp[new_node.vertex_id] = new_node.level;
       }
     }
     sub_vertices_count++;
