@@ -599,8 +599,10 @@ static void SampleSubgraph(const NDArray &csr,
   float copy_sub_id = 0.0;
   float copy_layer = 0.0;
   float copy_sub_csr = 0.0;
+  float sample_time = 0.0;
 
   Timer timer;
+  Timer while_timer;
 
   timer.reset();
   timer.tic();
@@ -651,6 +653,8 @@ static void SampleSubgraph(const NDArray &csr,
       tmp_sampled_edge_list.clear();
       dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
       
+      while_timer.reset();
+      while_timer.tic();
       if (probability == nullptr) {  // uniform-sample
         GetUniformSample(val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
@@ -669,6 +673,7 @@ static void SampleSubgraph(const NDArray &csr,
                        &tmp_sampled_edge_list,
                        &time_seed);
       }
+      sample_time += while_timer.toc();
 
       CHECK_EQ(tmp_sampled_src_list.size(),
                tmp_sampled_edge_list.size());
@@ -785,11 +790,12 @@ static void SampleSubgraph(const NDArray &csr,
     indptr_out[i] = indptr_out[i-1];
   }
   copy_sub_csr += timer.toc();
-  std::cout << "init time: " << init_time / 1000.0 << "\n";
-  std::cout << "while time: " << while_time / 1000.0 << "\n";
-  std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 << "\n";
-  std::cout << "copy layer time: " << copy_layer / 1000.0 << "\n";
-  std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 << "\n";
+  std::cout << "init time: " << init_time / 1000.0 << "(mill sec)\n";
+  std::cout << "while time: " << while_time / 1000.0 << "(mill sec)\n";
+  std::cout << "sample time: " << sample_time  << "(micro sec)\n";
+  std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 << "(mill sec)\n";
+  std::cout << "copy layer time: " << copy_layer / 1000.0 << "(mill sec)\n";
+  std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 << "(mill sec)\n";
 }
 
 /*
