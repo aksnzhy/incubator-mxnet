@@ -601,6 +601,7 @@ static void SampleSubgraph(const NDArray &csr,
   float copy_sub_csr = 0.0;
   float sample_time = 0.0;
   float hash_lookup_time = 0.0;
+  float neighbor_list_push_time = 0.0;
 
   Timer timer;
   Timer while_timer;
@@ -691,6 +692,9 @@ static void SampleSubgraph(const NDArray &csr,
       neigh_pos[dst_id] = pos;
       hash_lookup_time += while_timer.toc();
  
+
+      while_timer.reset();
+      while_timer.tic();
       // First we push the size of neighbor vector
       neighbor_list.push_back(tmp_sampled_edge_list.size());
       // Then push the vertices
@@ -701,6 +705,8 @@ static void SampleSubgraph(const NDArray &csr,
       for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
         neighbor_list.push_back(tmp_sampled_edge_list[i]);
       }
+      neighbor_list_push_time += while_timer.toc();
+
       num_edges += tmp_sampled_src_list.size();
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
       for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
@@ -814,6 +820,7 @@ static void SampleSubgraph(const NDArray &csr,
   std::cout << "while time: " << while_time / 1000.0 << "(mill sec)\n";
   std::cout << "   sample time: " << sample_time / 1000.0 << "(mill sec)\n";
   std::cout << "   hash-lookup time: " << hash_lookup_time / 1000.0 << "(mill sec)\n";
+  std::cout << "   neighbor_list push time: " << neighbor_list_push_time / 1000.0 << "(mill sec)\n";
   std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 << "(mill sec)\n";
   std::cout << "copy layer time: " << copy_layer / 1000.0 << "(mill sec)\n";
   std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 << "(mill sec)\n";
