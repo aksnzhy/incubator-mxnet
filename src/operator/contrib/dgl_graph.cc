@@ -639,8 +639,8 @@ static void SampleSubgraph(const NDArray &csr,
       num_edges += tmp_sampled_src_list.size();
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
       for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
-        auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
-        if (ret == sub_ver_mp.end()) {
+        //auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
+        //if (ret == sub_ver_mp.end()) {
           ver_node new_node;
           new_node.vertex_id = tmp_sampled_src_list[i];
           new_node.level = cur_node.level + 1;
@@ -655,7 +655,7 @@ static void SampleSubgraph(const NDArray &csr,
               sub_ver_mp[new_node.vertex_id] = new_node.level;
             }
           }
-        }
+        //}
       }
     //}
     sub_vertices_count++;
