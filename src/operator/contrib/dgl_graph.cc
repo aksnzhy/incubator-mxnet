@@ -102,7 +102,9 @@ class ArrayHeap {
   /*
    * Sample a vector by given the size n
    */
-  void SampleWithoutReplacement(size_t n, std::vector<size_t>* samples, unsigned int* seed) {
+  void SampleWithoutReplacement(size_t n, 
+                                std::vector<size_t>* samples, 
+                                unsigned int* seed) {
     // sample n elements
     for (size_t i = 0; i < n; ++i) {
       samples->at(i) = this->Sample(seed);
@@ -451,24 +453,20 @@ static void NegateSet(const std::vector<size_t> &idxs,
  */
 static void GetUniformSample(const dgl_id_t* val_list,
                              const dgl_id_t* col_list,
-                             const dgl_id_t* indptr,
-                             const dgl_id_t dst_id,
+                             const size_t ver_len,
                              const size_t max_num_neighbor,
                              std::vector<dgl_id_t>* out_ver,
                              std::vector<dgl_id_t>* out_edge,
                              unsigned int* seed) {
-  size_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
   // Copy ver_list to output
   if (ver_len <= max_num_neighbor) {
-    for (dgl_id_t i = *(indptr+dst_id); i < *(indptr+dst_id+1); ++i) {
+    for (size_t i = 0; i < ver_len; ++i) {
       out_ver->push_back(col_list[i]);
       out_edge->push_back(val_list[i]);
     }
     return;
   }
   // If we just sample a small number of elements from a large neighbor list.
-  const dgl_id_t* col_ptr = col_list + *(indptr + dst_id);
-  const dgl_id_t* val_ptr = val_list + *(indptr + dst_id);
   std::vector<size_t> sorted_idxs;
   if (ver_len > max_num_neighbor * 2) {
     sorted_idxs.reserve(max_num_neighbor);
@@ -488,8 +486,8 @@ static void GetUniformSample(const dgl_id_t* val_list,
     CHECK_GT(sorted_idxs[i], sorted_idxs[i - 1]);
   }
   for (auto idx : sorted_idxs) {
-    out_ver->push_back(col_ptr[idx]);
-    out_edge->push_back(val_ptr[idx]);
+    out_ver->push_back(col_list[idx]);
+    out_edge->push_back(val_list[idx]);
   }
 }
 
@@ -499,28 +497,24 @@ static void GetUniformSample(const dgl_id_t* val_list,
 static void GetNonUniformSample(const float* probability,
                                 const dgl_id_t* val_list,
                                 const dgl_id_t* col_list,
-                                const dgl_id_t* indptr,
-                                const dgl_id_t dst_id,
+                                const size_t ver_len,
                                 const size_t max_num_neighbor,
                                 std::vector<dgl_id_t>* out_ver,
                                 std::vector<dgl_id_t>* out_edge,
                                 unsigned int* seed) {
-  size_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
   // Copy ver_list to output
   if (ver_len <= max_num_neighbor) {
-    for (dgl_id_t i = *(indptr+dst_id); i < *(indptr+dst_id+1); ++i) {
+    for (size_t i = 0; i < ver_len; ++i) {
       out_ver->push_back(col_list[i]);
       out_edge->push_back(val_list[i]);
     }
     return;
   }
   // Make sample
-  const dgl_id_t* col_ptr = col_list + *(indptr + dst_id);
-  const dgl_id_t* val_ptr = val_list + *(indptr + dst_id);
   std::vector<size_t> sp_index(max_num_neighbor);
   std::vector<float> sp_prob(ver_len);
   for (size_t i = 0; i < ver_len; ++i) {
-    sp_prob[i] = probability[col_ptr[i]];
+    sp_prob[i] = probability[col_list[i]];
   }
   ArrayHeap arrayHeap(sp_prob);
   arrayHeap.SampleWithoutReplacement(max_num_neighbor, &sp_index, seed);
@@ -528,8 +522,8 @@ static void GetNonUniformSample(const float* probability,
   out_edge->resize(max_num_neighbor);
   for (size_t i = 0; i < max_num_neighbor; ++i) {
     size_t idx = sp_index[i];
-    out_ver->at(i) = col_ptr[idx];
-    out_edge->at(i) = val_ptr[idx];
+    out_ver->at(i) = col_list[idx];
+    out_edge->at(i) = val_list[idx];
   }
   sort(out_ver->begin(), out_ver->end());
   sort(out_edge->begin(), out_edge->end());
@@ -595,36 +589,34 @@ static void SampleSubgraph(const NDArray &csr,
   // ver_id, position
   std::unordered_map<dgl_id_t, size_t> neigh_pos;
   std::vector<dgl_id_t> neighbor_list;
-  //neighbor_list.reserve((num_neighbor+1)*max_num_vertices);
   size_t num_edges = 0;
-
+  // BFS traverse
   while (!node_queue.empty() &&
-    sub_vertices_count < max_num_vertices) {
+         sub_vertices_count < max_num_vertices) {
     ver_node& cur_node = node_queue.front();
     dgl_id_t dst_id = cur_node.vertex_id;
-    if (cur_node.level < num_hops) {
-      auto ret = sub_ver_mp.find(dst_id);
-      if (ret != sub_ver_mp.end()) {
-        node_queue.pop();
-        continue;
-      }
+    auto ret = sub_ver_mp.find(dst_id);
+    if (ret != sub_ver_mp.end()) {
+      node_queue.pop();
+      continue;
+    }
+    //if (cur_node.level < num_hops) {
       tmp_sampled_src_list.clear();
       tmp_sampled_edge_list.clear();
+      dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
       if (probability == nullptr) {  // uniform-sample
-        GetUniformSample(val_list,
-                       col_list,
-                       indptr,
-                       dst_id,
+        GetUniformSample(val_list + *(indptr + dst_id),
+                       col_list + *(indptr + dst_id),
+                       ver_len,
                        num_neighbor,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
                        &time_seed);
       } else {  // non-uniform-sample
         GetNonUniformSample(probability,
-                       val_list,
-                       col_list,
-                       indptr,
-                       dst_id,
+                       val_list + *(indptr + dst_id),
+                       col_list + *(indptr + dst_id),
+                       ver_len,
                        num_neighbor,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
@@ -652,20 +644,20 @@ static void SampleSubgraph(const NDArray &csr,
           ver_node new_node;
           new_node.vertex_id = tmp_sampled_src_list[i];
           new_node.level = cur_node.level + 1;
-          node_queue.push(new_node);
+          if (new_node.level < num_hops) {
+            node_queue.push(new_node);
+          } else {
+            auto ret = sub_ver_mp.find(new_node.vertex_id);
+            if (ret == sub_ver_mp.end()) {
+              size_t pos = neighbor_list.size();
+              neigh_pos[new_node.vertex_id] = pos;
+              neighbor_list.push_back(0);
+              sub_ver_mp[new_node.vertex_id] = new_node.level;
+            }
+          }
         }
       }
-    } else {  // vertex without any neighbor
-      auto ret = sub_ver_mp.find(dst_id);
-      if (ret != sub_ver_mp.end()) {
-        node_queue.pop();
-        continue;
-      }
-      size_t pos = neighbor_list.size();
-      neigh_pos[dst_id] = pos;
-      neighbor_list.push_back(0);
-      sub_ver_mp[cur_node.vertex_id] = cur_node.level;
-    }
+    //}
     sub_vertices_count++;
     node_queue.pop();
   }
