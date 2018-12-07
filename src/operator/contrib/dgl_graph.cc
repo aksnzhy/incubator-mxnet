@@ -596,7 +596,10 @@ static void SampleSubgraph(const NDArray &csr,
                            dgl_id_t max_num_vertices) {
   float init_time = 0.0;
   float while_time = 0.0;
-  float copy_time = 0.0;
+  float copy_sub_id = 0.0;
+  float copy_layer = 0.0;
+  float copy_sub_csr = 0.0;
+
   Timer timer;
 
   timer.reset();
@@ -720,6 +723,9 @@ static void SampleSubgraph(const NDArray &csr,
   // The last element stores the actual
   // number of vertices in the subgraph.
   out[max_num_vertices] = sub_ver_mp.size();
+  copy_sub_id += timer.toc();
+
+
   // Copy sub_probability
   if (sub_prob != nullptr) {
     for (dgl_id_t i = 0; i < max_num_vertices; ++i) {
@@ -731,6 +737,9 @@ static void SampleSubgraph(const NDArray &csr,
       }
     }
   }
+
+  timer.reset();
+  timer.tic();
   // Copy layer
   for (dgl_id_t i = 0; i < max_num_vertices; ++i) {
     dgl_id_t idx = out[i];
@@ -740,6 +749,9 @@ static void SampleSubgraph(const NDArray &csr,
       out_layer[i] = -1;
     }
   }
+  copy_layer += timer.toc();
+
+  timer.reset();
   // Construct sub_csr_graph
   TShape shape_1(1);
   TShape shape_2(1);
@@ -771,10 +783,12 @@ static void SampleSubgraph(const NDArray &csr,
   for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
   }
-  copy_time += timer.toc();
+  copy_sub_csr += timer.toc();
   std::cout << "init time: " << init_time / 1000.0 << "\n";
   std::cout << "while time: " << while_time / 1000.0 << "\n";
-  std::cout << "copy time: " << copy_time / 1000.0 << "\n";
+  std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 << "\n";
+  std::cout << "copy layer time: " << copy_layer / 1000.0 << "\n";
+  std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 << "\n";
 }
 
 /*
