@@ -46,7 +46,7 @@ class Timer {
   // Reset start time
   void reset() {
     begin = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(begin-begin);
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(begin-begin);
   }
 
   // Code start
@@ -56,7 +56,7 @@ class Timer {
 
   // Code end
   float toc() {
-    duration += std::chrono::duration_cast<std::chrono::milliseconds>
+    duration += std::chrono::duration_cast<std::chrono::microseconds>
               (std::chrono::high_resolution_clock::now()-begin);
     return get();
   }
@@ -68,7 +68,7 @@ class Timer {
 
  protected:
     std::chrono::high_resolution_clock::time_point begin;
-    std::chrono::milliseconds duration;
+    std::chrono::microseconds duration;
 };
 
 /*
@@ -594,8 +594,13 @@ static void SampleSubgraph(const NDArray &csr,
                            dgl_id_t num_hops,
                            dgl_id_t num_neighbor,
                            dgl_id_t max_num_vertices) {
-  float sample_time = 0.0;
+  float init_time = 0.0;
+  float while_time = 0.0;
+  float copy_time = 0.0;
+  Timer timer;
 
+  timer.reset();
+  timer.tic();
   unsigned int time_seed = time(nullptr);
   size_t num_seeds = seed_arr.shape().Size();
   CHECK_GE(max_num_vertices, num_seeds);
@@ -625,7 +630,9 @@ static void SampleSubgraph(const NDArray &csr,
   std::unordered_map<dgl_id_t, size_t> neigh_pos;
   std::vector<dgl_id_t> neighbor_list;
   size_t num_edges = 0;
-  Timer timer;
+  init_time += timer.toc();
+  
+  timer.reset();
   timer.tic();
   while (!node_queue.empty() &&
     sub_vertices_count < max_num_vertices) {
@@ -694,8 +701,10 @@ static void SampleSubgraph(const NDArray &csr,
     sub_vertices_count++;
     node_queue.pop();
   }
-  sample_time += timer.toc();
+  while_time += timer.toc();
 
+  timer.reset();
+  timer.tic();
   // Copy sub_ver_mp to output[0]
   size_t idx = 0;
   for (auto& data : sub_ver_mp) {
@@ -762,7 +771,10 @@ static void SampleSubgraph(const NDArray &csr,
   for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
   }
-  std::cout << "while time: " << sample_time << "\n";
+  copy_time += timer.toc();
+  std::cout << "init time: " << init_time / 1000.0 << "\n";
+  std::cout << "while time: " << while_time / 1000.0 << "\n";
+  std::cout << "copy time: " << copy_time / 1000.0 << "\n";
 }
 
 /*
