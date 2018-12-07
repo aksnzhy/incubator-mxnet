@@ -33,43 +33,42 @@
 namespace mxnet {
 namespace op {
 
-class Timer {
- public:
-  Timer() {
-    reset();
-  }
-
-  // Reset start time
-  void reset() {
-    begin = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(begin-begin);
-  }
-
-  // Code start
-  void tic() {
-    begin = std::chrono::high_resolution_clock::now();
-  }
-
-  // Code end
-  float toc() {
-    duration += std::chrono::duration_cast<std::chrono::milliseconds>
-              (std::chrono::high_resolution_clock::now()-begin);
-    return get();
-  }
-
-  // Get the time duration
-  float get() {
-    return (float)duration.count();
-  }
-
- protected:
-    std::chrono::high_resolution_clock::time_point begin;
-    std::chrono::milliseconds duration;
-};
-
 typedef int64_t dgl_id_t;
 
 ////////////////////////////// Graph Sampling ///////////////////////////////
+
+template<class DType>
+class FastQueue {
+ public:
+  explicit FastQueue(size_t max_size) {
+    array_.reserve(max_size);
+    write_pointer_ = 0;
+    read_pointer_ = 0;
+    queue_size_ = 0;
+  }
+  ~FastQueue() {}
+
+  void push(DType data) {
+    array_.push_back(data);
+    write_pointer_++;
+  }
+
+  DType& front() {
+    DType& res = array_[read_pointer_];
+    read_pointer_++;
+    return res;
+  }
+
+  bool empty() {
+    return (read_pointer_ == write_pointer_);
+  }
+
+ private:
+  size_t queue_size_;
+  size_t write_pointer_;
+  size_t read_pointer_;
+  std::vector<DType> array_;
+};
 
 /*
  * ArrayHeap is used to sample elements from vector
@@ -594,8 +593,6 @@ static void SampleSubgraph(const NDArray &csr,
                            dgl_id_t num_hops,
                            dgl_id_t num_neighbor,
                            dgl_id_t max_num_vertices) {
-  float sample_time = 0.0;
-
   unsigned int time_seed = time(nullptr);
   size_t num_seeds = seed_arr.shape().Size();
   CHECK_GE(max_num_vertices, num_seeds);
@@ -611,7 +608,8 @@ static void SampleSubgraph(const NDArray &csr,
   dgl_id_t sub_vertices_count = 0;
   // <vertex_id, layer_id>
   std::unordered_map<dgl_id_t, int> sub_ver_mp;
-  std::queue<ver_node> node_queue;
+  //std::queue<ver_node> node_queue;
+  FastQueue<ver_node> node_queue(2000);
   // add seed vertices
   for (size_t i = 0; i < num_seeds; ++i) {
     ver_node node;
@@ -633,14 +631,13 @@ static void SampleSubgraph(const NDArray &csr,
     if (cur_node.level < num_hops) {
       auto ret = sub_ver_mp.find(dst_id);
       if (ret != sub_ver_mp.end()) {
-        node_queue.pop();
+        //node_queue.pop();
         continue;
       }
       tmp_sampled_src_list.clear();
       tmp_sampled_edge_list.clear();
       dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
-      Timer timer;
-      timer.tic();
+      
       if (probability == nullptr) {  // uniform-sample
         GetUniformSample(val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
@@ -659,7 +656,7 @@ static void SampleSubgraph(const NDArray &csr,
                        &tmp_sampled_edge_list,
                        &time_seed);
       }
-      sample_time += timer.toc();
+
       CHECK_EQ(tmp_sampled_src_list.size(),
                tmp_sampled_edge_list.size());
       size_t pos = neighbor_list.size();
@@ -688,7 +685,7 @@ static void SampleSubgraph(const NDArray &csr,
     } else {  // vertex without any neighbor
       auto ret = sub_ver_mp.find(dst_id);
       if (ret != sub_ver_mp.end()) {
-        node_queue.pop();
+        //node_queue.pop();
         continue;
       }
       size_t pos = neighbor_list.size();
@@ -697,7 +694,7 @@ static void SampleSubgraph(const NDArray &csr,
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
     }
     sub_vertices_count++;
-    node_queue.pop();
+    //node_queue.pop();
   }
 
   // Copy sub_ver_mp to output[0]
@@ -766,8 +763,6 @@ static void SampleSubgraph(const NDArray &csr,
   for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
   }
-
-  std::cout << "Sample time: " << sample_time << std::endl;
 }
 
 /*
