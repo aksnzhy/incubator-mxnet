@@ -28,9 +28,44 @@
 #include "../../imperative/imperative_utils.h"
 #include "../subgraph_op_common.h"
 #include "./dgl_graph-inl.h"
+#include <chrono>
 
 namespace mxnet {
 namespace op {
+
+class Timer {
+ public:
+  Timer() {
+    reset();
+  }
+
+  // Reset start time
+  void reset() {
+    begin = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(begin-begin);
+  }
+
+  // Code start
+  void tic() {
+    begin = std::chrono::high_resolution_clock::now();
+  }
+
+  // Code end
+  float toc() {
+    duration += std::chrono::duration_cast<std::chrono::milliseconds>
+              (std::chrono::high_resolution_clock::now()-begin);
+    return get();
+  }
+
+  // Get the time duration
+  float get() {
+    return (float)duration.count() / 1000;
+  }
+
+ protected:
+    std::chrono::high_resolution_clock::time_point begin;
+    std::chrono::milliseconds duration;
+};
 
 typedef int64_t dgl_id_t;
 
@@ -102,9 +137,7 @@ class ArrayHeap {
   /*
    * Sample a vector by given the size n
    */
-  void SampleWithoutReplacement(size_t n,
-                                std::vector<size_t>* samples,
-                                unsigned int* seed) {
+  void SampleWithoutReplacement(size_t n, std::vector<size_t>* samples, unsigned int* seed) {
     // sample n elements
     for (size_t i = 0; i < n; ++i) {
       samples->at(i) = this->Sample(seed);
@@ -561,6 +594,8 @@ static void SampleSubgraph(const NDArray &csr,
                            dgl_id_t num_hops,
                            dgl_id_t num_neighbor,
                            dgl_id_t max_num_vertices) {
+  float sample_time = 0.0;
+  
   unsigned int time_seed = time(nullptr);
   size_t num_seeds = seed_arr.shape().Size();
   CHECK_GE(max_num_vertices, num_seeds);
@@ -590,29 +625,32 @@ static void SampleSubgraph(const NDArray &csr,
   std::unordered_map<dgl_id_t, size_t> neigh_pos;
   std::vector<dgl_id_t> neighbor_list;
   size_t num_edges = 0;
-  // BFS traverse
+
   while (!node_queue.empty() &&
-         sub_vertices_count < max_num_vertices) {
+    sub_vertices_count < max_num_vertices) {
     ver_node& cur_node = node_queue.front();
     dgl_id_t dst_id = cur_node.vertex_id;
-    auto ret = sub_ver_mp.find(dst_id);
-    if (ret != sub_ver_mp.end()) {
-      node_queue.pop();
-      continue;
-    }
-    tmp_sampled_src_list.clear();
-    tmp_sampled_edge_list.clear();
-    dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
-    if (probability == nullptr) {  // uniform-sample
-      GetUniformSample(val_list + *(indptr + dst_id),
+    if (cur_node.level < num_hops) {
+      auto ret = sub_ver_mp.find(dst_id);
+      if (ret != sub_ver_mp.end()) {
+        node_queue.pop();
+        continue;
+      }
+      tmp_sampled_src_list.clear();
+      tmp_sampled_edge_list.clear();
+      dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
+      Timer timer;
+      timer.tic();
+      if (probability == nullptr) {  // uniform-sample
+        GetUniformSample(val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
                        ver_len,
                        num_neighbor,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
                        &time_seed);
-    } else {  // non-uniform-sample
-      GetNonUniformSample(probability,
+      } else {  // non-uniform-sample
+        GetNonUniformSample(probability,
                        val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
                        ver_len,
@@ -620,38 +658,43 @@ static void SampleSubgraph(const NDArray &csr,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
                        &time_seed);
-    }
-    CHECK_EQ(tmp_sampled_src_list.size(),
-             tmp_sampled_edge_list.size());
-    size_t pos = neighbor_list.size();
-    neigh_pos[dst_id] = pos;
-    // First we push the size of neighbor vector
-    neighbor_list.push_back(tmp_sampled_edge_list.size());
-    // Then push the vertices
-    for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
-      neighbor_list.push_back(tmp_sampled_src_list[i]);
-    }
-    // Finally we push the edge list
-    for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
-      neighbor_list.push_back(tmp_sampled_edge_list[i]);
-    }
-    num_edges += tmp_sampled_src_list.size();
-    sub_ver_mp[cur_node.vertex_id] = cur_node.level;
-    for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
-      auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
-      if (ret == sub_ver_mp.end()) {
-        ver_node new_node;
-        new_node.vertex_id = tmp_sampled_src_list[i];
-        new_node.level = cur_node.level + 1;
-        if (new_node.level < num_hops) {
+      }
+      sample_time += timer.toc();
+      CHECK_EQ(tmp_sampled_src_list.size(),
+               tmp_sampled_edge_list.size());
+      size_t pos = neighbor_list.size();
+      neigh_pos[dst_id] = pos;
+      // First we push the size of neighbor vector
+      neighbor_list.push_back(tmp_sampled_edge_list.size());
+      // Then push the vertices
+      for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+        neighbor_list.push_back(tmp_sampled_src_list[i]);
+      }
+      // Finally we push the edge list
+      for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
+        neighbor_list.push_back(tmp_sampled_edge_list[i]);
+      }
+      num_edges += tmp_sampled_src_list.size();
+      sub_ver_mp[cur_node.vertex_id] = cur_node.level;
+      for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+        auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
+        if (ret == sub_ver_mp.end()) {
+          ver_node new_node;
+          new_node.vertex_id = tmp_sampled_src_list[i];
+          new_node.level = cur_node.level + 1;
           node_queue.push(new_node);
-        } else {
-          size_t pos = neighbor_list.size();
-          neigh_pos[new_node.vertex_id] = pos;
-          neighbor_list.push_back(0);
-          sub_ver_mp[new_node.vertex_id] = new_node.level;
         }
       }
+    } else {  // vertex without any neighbor
+      auto ret = sub_ver_mp.find(dst_id);
+      if (ret != sub_ver_mp.end()) {
+        node_queue.pop();
+        continue;
+      }
+      size_t pos = neighbor_list.size();
+      neigh_pos[dst_id] = pos;
+      neighbor_list.push_back(0);
+      sub_ver_mp[cur_node.vertex_id] = cur_node.level;
     }
     sub_vertices_count++;
     node_queue.pop();
@@ -723,6 +766,8 @@ static void SampleSubgraph(const NDArray &csr,
   for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
   }
+
+  std::cout << "Sample time: " << sample_time << std::endl;
 }
 
 /*
