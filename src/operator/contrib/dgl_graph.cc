@@ -37,37 +37,38 @@ typedef int64_t dgl_id_t;
 
 ////////////////////////////// Graph Sampling ///////////////////////////////
 
-template<class DType>
-class FastQueue {
+class Timer {
  public:
-  explicit FastQueue(size_t max_size) {
-    array_.reserve(max_size);
-    write_pointer_ = 0;
-    read_pointer_ = 0;
-    queue_size_ = 0;
-  }
-  ~FastQueue() {}
-
-  void push(DType data) {
-    array_.push_back(data);
-    write_pointer_++;
+  Timer() {
+    reset();
   }
 
-  DType& front() {
-    DType& res = array_[read_pointer_];
-    read_pointer_++;
-    return res;
+  // Reset start time
+  void reset() {
+    begin = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(begin-begin);
   }
 
-  bool empty() {
-    return (read_pointer_ == write_pointer_);
+  // Code start
+  void tic() {
+    begin = std::chrono::high_resolution_clock::now();
   }
 
- private:
-  size_t queue_size_;
-  size_t write_pointer_;
-  size_t read_pointer_;
-  std::vector<DType> array_;
+  // Code end
+  float toc() {
+    duration += std::chrono::duration_cast<std::chrono::microseconds>
+              (std::chrono::high_resolution_clock::now()-begin);
+    return get();
+  }
+
+  // Get the time duration
+  float get() {
+    return (float)duration.count();
+  }
+
+ protected:
+    std::chrono::high_resolution_clock::time_point begin;
+    std::chrono::microseconds duration;
 };
 
 /*
@@ -593,6 +594,8 @@ static void SampleSubgraph(const NDArray &csr,
                            dgl_id_t num_hops,
                            dgl_id_t num_neighbor,
                            dgl_id_t max_num_vertices) {
+  float sample_time = 0.0;
+
   unsigned int time_seed = time(nullptr);
   size_t num_seeds = seed_arr.shape().Size();
   CHECK_GE(max_num_vertices, num_seeds);
@@ -608,8 +611,7 @@ static void SampleSubgraph(const NDArray &csr,
   dgl_id_t sub_vertices_count = 0;
   // <vertex_id, layer_id>
   std::unordered_map<dgl_id_t, int> sub_ver_mp;
-  //std::queue<ver_node> node_queue;
-  FastQueue<ver_node> node_queue(num_seeds*2);
+  std::queue<ver_node> node_queue;
   // add seed vertices
   for (size_t i = 0; i < num_seeds; ++i) {
     ver_node node;
@@ -623,17 +625,18 @@ static void SampleSubgraph(const NDArray &csr,
   std::unordered_map<dgl_id_t, size_t> neigh_pos;
   std::vector<dgl_id_t> neighbor_list;
   size_t num_edges = 0;
-
+  Timer timer;
+  timer.tic();
   while (!node_queue.empty() &&
     sub_vertices_count < max_num_vertices) {
     ver_node& cur_node = node_queue.front();
     dgl_id_t dst_id = cur_node.vertex_id;
+    auto ret = sub_ver_mp.find(dst_id);
+    if (ret != sub_ver_mp.end()) {
+      node_queue.pop();
+      continue;
+    }
     if (cur_node.level < num_hops) {
-      auto ret = sub_ver_mp.find(dst_id);
-      if (ret != sub_ver_mp.end()) {
-        //node_queue.pop();
-        continue;
-      }
       tmp_sampled_src_list.clear();
       tmp_sampled_edge_list.clear();
       dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
@@ -683,19 +686,15 @@ static void SampleSubgraph(const NDArray &csr,
         }
       }
     } else {  // vertex without any neighbor
-      auto ret = sub_ver_mp.find(dst_id);
-      if (ret != sub_ver_mp.end()) {
-        //node_queue.pop();
-        continue;
-      }
       size_t pos = neighbor_list.size();
       neigh_pos[dst_id] = pos;
       neighbor_list.push_back(0);
       sub_ver_mp[cur_node.vertex_id] = cur_node.level;
     }
     sub_vertices_count++;
-    //node_queue.pop();
+    node_queue.pop();
   }
+  sample_time += timer.toc();
 
   // Copy sub_ver_mp to output[0]
   size_t idx = 0;
@@ -763,6 +762,7 @@ static void SampleSubgraph(const NDArray &csr,
   for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
   }
+  std::cout << "while time: " << sample_time << "\n";
 }
 
 /*
