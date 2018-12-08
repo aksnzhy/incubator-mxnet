@@ -28,6 +28,7 @@
 #include "../../imperative/imperative_utils.h"
 #include "../subgraph_op_common.h"
 #include "./dgl_graph-inl.h"
+#include <chrono>
 
 namespace mxnet {
 namespace op {
@@ -66,8 +67,8 @@ class Timer {
   }
 
  protected:
-  std::chrono::high_resolution_clock::time_point begin;
-  std::chrono::nanoseconds duration;
+    std::chrono::high_resolution_clock::time_point begin;
+    std::chrono::nanoseconds duration;
 };
 
 /*
@@ -590,9 +591,9 @@ static void SampleSubgraph(const NDArray &csr,
                            float* sub_prob,
                            const NDArray &sub_layer,
                            const float* probability,
-                           int num_hops,
-                           size_t num_neighbor,
-                           size_t max_num_vertices) {
+                           dgl_id_t num_hops,
+                           dgl_id_t num_neighbor,
+                           dgl_id_t max_num_vertices) {
   float init_time = 0.0;
   float copy_sub_id = 0.0;
   float copy_layer = 0.0;
@@ -603,6 +604,7 @@ static void SampleSubgraph(const NDArray &csr,
   float queue_time = 0.0;
 
   Timer timer;
+  Timer while_timer;
 
 //--------------------------- Init Time --------------------------------------//
 //  timer.reset();
@@ -619,7 +621,7 @@ static void SampleSubgraph(const NDArray &csr,
   dgl_id_t* out_layer = sub_layer.data().dptr<dgl_id_t>();
 
   // BFS traverse the graph and sample vertices
-  size_t sub_vertices_count = 0;
+  dgl_id_t sub_vertices_count = 0;
   // <vertex_id, layer_id>
   std::unordered_map<dgl_id_t, int> sub_ver_mp;
   std::queue<ver_node> node_queue;
@@ -629,7 +631,6 @@ static void SampleSubgraph(const NDArray &csr,
     node.vertex_id = seed[i];
     node.level = 0;
     node_queue.push(node);
-    sub_ver_mp[seed[i]] = 0;
   }
   std::vector<dgl_id_t> tmp_sampled_src_list;
   std::vector<dgl_id_t> tmp_sampled_edge_list;
@@ -637,37 +638,56 @@ static void SampleSubgraph(const NDArray &csr,
   std::unordered_map<dgl_id_t, size_t> neigh_pos;
   std::vector<dgl_id_t> neighbor_list;
   size_t num_edges = 0;
-//  init_time += timer.toc();
+  init_time += timer.toc();
 //--------------------------- Init Time --------------------------------------//
-
+  
   while (!node_queue.empty() &&
     sub_vertices_count < max_num_vertices) {
 
 //--------------------------- Queue Time --------------------------------------//
-//    timer.reset();
-//    timer.tic();
+    while_timer.reset();
+    while_timer.tic();
     ver_node& cur_node = node_queue.front();
-//    queue_time += timer.toc();
+    queue_time += while_timer.toc();
 //--------------------------- Queue Time --------------------------------------//
 
     dgl_id_t dst_id = cur_node.vertex_id;
-    tmp_sampled_src_list.clear();
-    tmp_sampled_edge_list.clear();
-    dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
 
+//--------------------------- Hash Time --------------------------------------//
+    while_timer.reset();
+    while_timer.tic();
+    auto ret = sub_ver_mp.find(dst_id);
+    hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
+
+    if (ret != sub_ver_mp.end()) {
+//--------------------------- Queue Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
+      node_queue.pop();
+      queue_time += while_timer.toc();
+//--------------------------- Queue Time --------------------------------------//
+      continue;
+    }
+
+    if (cur_node.level < num_hops) {
+      tmp_sampled_src_list.clear();
+      tmp_sampled_edge_list.clear();
+      dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
+      
 //--------------------------- Sample Time --------------------------------------//
-//    timer.reset();
-//    timer.tic();
-    if (probability == nullptr) {  // uniform-sample
-      GetUniformSample(val_list + *(indptr + dst_id),
+      while_timer.reset();
+      while_timer.tic();
+      if (probability == nullptr) {  // uniform-sample
+        GetUniformSample(val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
                        ver_len,
                        num_neighbor,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
                        &time_seed);
-    } else {  // non-uniform-sample
-      GetNonUniformSample(probability,
+      } else {  // non-uniform-sample
+        GetNonUniformSample(probability,
                        val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
                        ver_len,
@@ -675,113 +695,123 @@ static void SampleSubgraph(const NDArray &csr,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
                        &time_seed);
-    }
-//   sample_time += timer.toc();
+      }
+      sample_time += while_timer.toc();
 //--------------------------- Sample Time --------------------------------------//
 
-    CHECK_EQ(tmp_sampled_src_list.size(), tmp_sampled_edge_list.size());
-    size_t pos = neighbor_list.size();
+      CHECK_EQ(tmp_sampled_src_list.size(),
+               tmp_sampled_edge_list.size());
+      size_t pos = neighbor_list.size();
 
 //--------------------------- Hash Time --------------------------------------//
-//    timer.reset();
-//    timer.tic();
-    neigh_pos[dst_id] = pos;
-//    hash_lookup_time += timer.toc();
+      while_timer.reset();
+      while_timer.tic();
+      neigh_pos[dst_id] = pos;
+      hash_lookup_time += while_timer.toc();
 //--------------------------- Hash Time --------------------------------------//
+ 
 
-//--------------------------- Vector Push Time --------------------------------------//   
-//    timer.reset();
-//    timer.tic(); 
-    // First we push the size of neighbor vector
-    neighbor_list.push_back(tmp_sampled_edge_list.size());
-    // Then push the vertices
-    for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
-      neighbor_list.push_back(tmp_sampled_src_list[i]);
-    }
-    // Finally we push the edge list
-    for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
-      neighbor_list.push_back(tmp_sampled_edge_list[i]);
-    }
-//    neighbor_list_push_time += timer.toc();
+//--------------------------- Vector Push Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
+      // First we push the size of neighbor vector
+      neighbor_list.push_back(tmp_sampled_edge_list.size());
+      // Then push the vertices
+      for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+        neighbor_list.push_back(tmp_sampled_src_list[i]);
+      }
+      // Finally we push the edge list
+      for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
+        neighbor_list.push_back(tmp_sampled_edge_list[i]);
+      }
+      neighbor_list_push_time += while_timer.toc();
 //--------------------------- Vector Push Time --------------------------------------//
 
-    num_edges += tmp_sampled_src_list.size();
-    for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+      num_edges += tmp_sampled_src_list.size();
 
 //--------------------------- Hash Time --------------------------------------//
-//      timer.reset();
-//      timer.tic(); 
-      auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
-//      hash_lookup_time += timer.toc();
+      while_timer.reset();
+      while_timer.tic();
+      sub_ver_mp[cur_node.vertex_id] = cur_node.level;
+      hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
+      for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+
+//--------------------------- Hash Time --------------------------------------//
+        while_timer.reset();
+        while_timer.tic();
+        auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
+        hash_lookup_time += while_timer.toc();
 //--------------------------- Hash Time --------------------------------------//
 
-      if (ret == sub_ver_mp.end()) {
-        ver_node new_node;
-        new_node.vertex_id = tmp_sampled_src_list[i];
-        new_node.level = cur_node.level + 1;
-        if (new_node.level < num_hops) {
+        if (ret == sub_ver_mp.end()) {
+          ver_node new_node;
+          new_node.vertex_id = tmp_sampled_src_list[i];
+          new_node.level = cur_node.level + 1;
+          
 //--------------------------- Queue Time --------------------------------------//
-//          timer.reset();
-//          timer.tic(); 
+          while_timer.reset();
+          while_timer.tic();
           node_queue.push(new_node);
-//          queue_time += timer.toc();
+          queue_time += while_timer.toc();
 //--------------------------- Queue Time --------------------------------------//
         }
-        // We need to add the neighbor in the hashtable here. This ensures that
-        // the vertex in the queue is unique. If we see a vertex before, we don't
-        // need to add it to the queue again.
-
-//--------------------------- Hash Time --------------------------------------//
-//        timer.reset();
-//        timer.tic(); 
-        sub_ver_mp[new_node.vertex_id] = new_node.level;
-//        hash_lookup_time += timer.toc();
-//--------------------------- Hash Time --------------------------------------//
-
-        // This vertex is in the last level. It doesn't have edges.
-        // If a vertex doesn't contain an edge, we don't need to add the vertex
-        // in neigh_pos or neighbor_list.
       }
+    } else {  // vertex without any neighbor
+      size_t pos = neighbor_list.size();
+
+//--------------------------- Hash Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
+      neigh_pos[dst_id] = pos;
+      hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
+
+//--------------------------- Vector Push Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
+      neighbor_list.push_back(0);
+      neighbor_list_push_time += while_timer.toc();
+//--------------------------- Vector Push Time --------------------------------------//
+
+//--------------------------- Hash Time --------------------------------------//
+      while_timer.reset();
+      while_timer.tic();
+      sub_ver_mp[cur_node.vertex_id] = cur_node.level;
+      hash_lookup_time += while_timer.toc();
+//--------------------------- Hash Time --------------------------------------//
     }
     sub_vertices_count++;
-//--------------------------- Queue Time --------------------------------------//
-//    timer.reset();
-//    timer.tic(); 
+    while_timer.reset();
+    while_timer.tic();
     node_queue.pop();
-//    queue_time += timer.toc();
-//--------------------------- Queue Time --------------------------------------//
+    queue_time += while_timer.toc();
   }
 
-//--------------------------- Copy sub-id & layer Time --------------------------------------//
-//  timer.reset();
-//  timer.tic();
+//--------------------------- Copy sub-id Time --------------------------------------//
+  timer.reset();
+  timer.tic();
   // Copy sub_ver_mp to output[0]
-  // Copy layer
-  std::vector<std::pair<dgl_id_t, dgl_id_t> > order_map;
-  order_map.reserve(sub_ver_mp.size());
-  for (auto& data : sub_ver_mp)
-    order_map.push_back(std::pair<dgl_id_t, dgl_id_t>(data.first, data.second));
-  size_t num_vertices = sub_ver_mp.size();
-  std::sort(order_map.begin(), order_map.end(), [](const std::pair<dgl_id_t, dgl_id_t> &a1, std::pair<dgl_id_t, dgl_id_t> &a2) {
-    return a1.first < a2.second;
-  });
-  for (size_t i = 0; i < order_map.size(); i++) {
-    out[i] = order_map[i].first;
-    out_layer[i] = order_map[i].second;
+  size_t idx = 0;
+  for (auto& data : sub_ver_mp) {
+    *(out+idx) = data.first;
+    idx++;
   }
-  for (size_t i = order_map.size(); i < max_num_vertices; i++) {
-    out[i] = -1;
-    out_layer[i] = -1;
+  size_t num_vertices = sub_ver_mp.size();
+  std::sort(out, out + num_vertices);
+  // The rest data will be set to -1
+  for (dgl_id_t i = idx; i < max_num_vertices; ++i) {
+    *(out+i) = -1;
   }
   // The last element stores the actual
   // number of vertices in the subgraph.
   out[max_num_vertices] = sub_ver_mp.size();
-//  copy_sub_id += timer.toc();
+  copy_sub_id += timer.toc();
 //--------------------------- Copy sub-id Time --------------------------------------//
 
   // Copy sub_probability
   if (sub_prob != nullptr) {
-    for (size_t i = 0; i < max_num_vertices; ++i) {
+    for (dgl_id_t i = 0; i < max_num_vertices; ++i) {
       dgl_id_t idx = out[i];
       if (idx != -1) {
         sub_prob[i] = probability[idx];
@@ -791,9 +821,24 @@ static void SampleSubgraph(const NDArray &csr,
     }
   }
 
+//--------------------------- Copy layer Time --------------------------------------//
+  timer.reset();
+  timer.tic();
+  // Copy layer
+  for (dgl_id_t i = 0; i < max_num_vertices; ++i) {
+    dgl_id_t idx = out[i];
+    if (idx != -1) {
+      out_layer[i] = sub_ver_mp[idx];
+    } else {
+      out_layer[i] = -1;
+    }
+  }
+  copy_layer += timer.toc();
+//--------------------------- Copy layer Time --------------------------------------//
+
 //--------------------------- Copy sub-csr Time --------------------------------------//
-//  timer.reset();
-//  timer.tic();
+  timer.reset();
+  timer.tic();
   // Construct sub_csr_graph
   TShape shape_1(1);
   TShape shape_2(1);
@@ -809,16 +854,9 @@ static void SampleSubgraph(const NDArray &csr,
   size_t collected_nedges = 0;
   for (size_t i = 0; i < num_vertices; i++) {
     dgl_id_t dst_id = *(out + i);
-    // If a vertex is in sub_ver_mp but not in neigh_pos, this vertex must not
-    // have edges.
-    size_t edge_size = 0;
-    auto it = neigh_pos.find(dst_id);
-    if (it != neigh_pos.end()) {
-      size_t pos = it->second;
-      CHECK_LT(pos, neighbor_list.size());
-      edge_size = neighbor_list[pos];
-      CHECK_LE(pos + edge_size * 2 + 1, neighbor_list.size());
-
+    size_t pos = neigh_pos[dst_id];
+    size_t edge_size = neighbor_list[pos];
+    if (edge_size != 0) {
       std::copy_n(neighbor_list.begin() + pos + 1,
                   edge_size,
                   col_list_out + collected_nedges);
@@ -829,21 +867,21 @@ static void SampleSubgraph(const NDArray &csr,
     }
     indptr_out[i+1] = indptr_out[i] + edge_size;
   }
-  for (size_t i = num_vertices+1; i <= max_num_vertices; ++i) {
+  for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
   }
-//  copy_sub_csr += timer.toc();
+  copy_sub_csr += timer.toc();
+
 //--------------------------- Copy sub-csr Time --------------------------------------//
 
-  /*
   std::cout << "init time: " << init_time / 1000.0 / 1000.0 << "(mill sec)\n";
   std::cout << "sample time: " << sample_time / 1000.0 / 1000.0 << "(mill sec)\n";
   std::cout << "hash-lookup time: " << hash_lookup_time / 1000.0 / 1000.0 << "(mill sec)\n";
   std::cout << "neighbor_list push time: " << neighbor_list_push_time / 1000.0 / 1000.0 << "(mill sec)\n";
   std::cout << "queue push-pop time: " << queue_time / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "copy sub-id & layer time: " << copy_sub_id / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 / 1000.0 << "(mill sec)\n";
+  std::cout << "copy layer time: " << copy_layer / 1000.0 / 1000.0 << "(mill sec)\n";
   std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 / 1000.0 << "(mill sec)\n";
-  */
 }
 
 /*
@@ -905,8 +943,7 @@ Example:
 
   out[2]
   [0 0 0 0 0]
-  <NDArray 5 @cpu(0)>
-
+<NDArray 5 @cpu(0)>
 )code" ADD_FILELINE)
 .set_attr_parser(ParamParser<NeighborSampleParam>)
 .set_num_inputs([](const NodeAttrs& attrs) {
@@ -996,7 +1033,6 @@ Example:
   out[3]
   [0 0 0 0 0]
   <NDArray 5 @cpu(0)>
-
 )code" ADD_FILELINE)
 .set_attr_parser(ParamParser<NeighborSampleParam>)
 .set_num_inputs([](const NodeAttrs& attrs) {
