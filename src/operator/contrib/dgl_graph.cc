@@ -28,7 +28,6 @@
 #include "../../imperative/imperative_utils.h"
 #include "../subgraph_op_common.h"
 #include "./dgl_graph-inl.h"
-#include <chrono>
 
 namespace mxnet {
 namespace op {
@@ -36,40 +35,6 @@ namespace op {
 typedef int64_t dgl_id_t;
 
 ////////////////////////////// Graph Sampling ///////////////////////////////
-
-class Timer {
- public:
-  Timer() {
-    reset();
-  }
-
-  // Reset start time
-  void reset() {
-    begin = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::nanoseconds>(begin-begin);
-  }
-
-  // Code start
-  void tic() {
-    begin = std::chrono::high_resolution_clock::now();
-  }
-
-  // Code end
-  float toc() {
-    duration += std::chrono::duration_cast<std::chrono::nanoseconds>
-              (std::chrono::high_resolution_clock::now()-begin);
-    return get();
-  }
-
-  // Get the time duration
-  float get() {
-    return (float)duration.count();
-  }
-
- protected:
-    std::chrono::high_resolution_clock::time_point begin;
-    std::chrono::nanoseconds duration;
-};
 
 /*
  * ArrayHeap is used to sample elements from vector
@@ -591,24 +556,9 @@ static void SampleSubgraph(const NDArray &csr,
                            float* sub_prob,
                            const NDArray &sub_layer,
                            const float* probability,
-                           dgl_id_t num_hops,
-                           dgl_id_t num_neighbor,
-                           dgl_id_t max_num_vertices) {
-  float init_time = 0.0;
-  float copy_sub_id = 0.0;
-  float copy_layer = 0.0;
-  float copy_sub_csr = 0.0;
-  float sample_time = 0.0;
-  float hash_lookup_time = 0.0;
-  float neighbor_list_push_time = 0.0;
-  float queue_time = 0.0;
-
-  Timer timer;
-  Timer while_timer;
-
-//--------------------------- Init Time --------------------------------------//
-//  timer.reset();
-//  timer.tic();
+                           int num_hops,
+                           size_t num_neighbor,
+                           size_t max_num_vertices) {
   unsigned int time_seed = time(nullptr);
   size_t num_seeds = seed_arr.shape().Size();
   CHECK_GE(max_num_vertices, num_seeds);
@@ -621,7 +571,6 @@ static void SampleSubgraph(const NDArray &csr,
   dgl_id_t* out_layer = sub_layer.data().dptr<dgl_id_t>();
 
   // BFS traverse the graph and sample vertices
-  dgl_id_t sub_vertices_count = 0;
   // <vertex_id, layer_id>
   std::unordered_map<dgl_id_t, int> sub_ver_mp;
   std::queue<ver_node> node_queue;
@@ -631,6 +580,7 @@ static void SampleSubgraph(const NDArray &csr,
     node.vertex_id = seed[i];
     node.level = 0;
     node_queue.push(node);
+    sub_ver_mp[seed[i]] = 0;
   }
   std::vector<dgl_id_t> tmp_sampled_src_list;
   std::vector<dgl_id_t> tmp_sampled_edge_list;
@@ -638,56 +588,24 @@ static void SampleSubgraph(const NDArray &csr,
   std::unordered_map<dgl_id_t, size_t> neigh_pos;
   std::vector<dgl_id_t> neighbor_list;
   size_t num_edges = 0;
-  init_time += timer.toc();
-//--------------------------- Init Time --------------------------------------//
-  
+
   while (!node_queue.empty() &&
-    sub_vertices_count < max_num_vertices) {
-
-//--------------------------- Queue Time --------------------------------------//
-    while_timer.reset();
-    while_timer.tic();
+    sub_ver_mp.size() < max_num_vertices) {
     ver_node& cur_node = node_queue.front();
-    queue_time += while_timer.toc();
-//--------------------------- Queue Time --------------------------------------//
-
     dgl_id_t dst_id = cur_node.vertex_id;
-
-//--------------------------- Hash Time --------------------------------------//
-    while_timer.reset();
-    while_timer.tic();
-    auto ret = sub_ver_mp.find(dst_id);
-    hash_lookup_time += while_timer.toc();
-//--------------------------- Hash Time --------------------------------------//
-
-    if (ret != sub_ver_mp.end()) {
-//--------------------------- Queue Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      node_queue.pop();
-      queue_time += while_timer.toc();
-//--------------------------- Queue Time --------------------------------------//
-      continue;
-    }
-
-    if (cur_node.level < num_hops) {
-      tmp_sampled_src_list.clear();
-      tmp_sampled_edge_list.clear();
-      dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
-      
-//--------------------------- Sample Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      if (probability == nullptr) {  // uniform-sample
-        GetUniformSample(val_list + *(indptr + dst_id),
+    tmp_sampled_src_list.clear();
+    tmp_sampled_edge_list.clear();
+    dgl_id_t ver_len = *(indptr+dst_id+1) - *(indptr+dst_id);
+    if (probability == nullptr) {  // uniform-sample
+      GetUniformSample(val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
                        ver_len,
                        num_neighbor,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
                        &time_seed);
-      } else {  // non-uniform-sample
-        GetNonUniformSample(probability,
+    } else {  // non-uniform-sample
+      GetNonUniformSample(probability,
                        val_list + *(indptr + dst_id),
                        col_list + *(indptr + dst_id),
                        ver_len,
@@ -695,123 +613,72 @@ static void SampleSubgraph(const NDArray &csr,
                        &tmp_sampled_src_list,
                        &tmp_sampled_edge_list,
                        &time_seed);
-      }
-      sample_time += while_timer.toc();
-//--------------------------- Sample Time --------------------------------------//
-
-      CHECK_EQ(tmp_sampled_src_list.size(),
-               tmp_sampled_edge_list.size());
-      size_t pos = neighbor_list.size();
-
-//--------------------------- Hash Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      neigh_pos[dst_id] = pos;
-      hash_lookup_time += while_timer.toc();
-//--------------------------- Hash Time --------------------------------------//
- 
-
-//--------------------------- Vector Push Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      // First we push the size of neighbor vector
-      neighbor_list.push_back(tmp_sampled_edge_list.size());
-      // Then push the vertices
-      for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
-        neighbor_list.push_back(tmp_sampled_src_list[i]);
-      }
-      // Finally we push the edge list
-      for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
-        neighbor_list.push_back(tmp_sampled_edge_list[i]);
-      }
-      neighbor_list_push_time += while_timer.toc();
-//--------------------------- Vector Push Time --------------------------------------//
-
-      num_edges += tmp_sampled_src_list.size();
-
-//--------------------------- Hash Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      sub_ver_mp[cur_node.vertex_id] = cur_node.level;
-      hash_lookup_time += while_timer.toc();
-//--------------------------- Hash Time --------------------------------------//
-      for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
-
-//--------------------------- Hash Time --------------------------------------//
-        while_timer.reset();
-        while_timer.tic();
-        auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
-        hash_lookup_time += while_timer.toc();
-//--------------------------- Hash Time --------------------------------------//
-
-        if (ret == sub_ver_mp.end()) {
-          ver_node new_node;
-          new_node.vertex_id = tmp_sampled_src_list[i];
-          new_node.level = cur_node.level + 1;
-          
-//--------------------------- Queue Time --------------------------------------//
-          while_timer.reset();
-          while_timer.tic();
-          node_queue.push(new_node);
-          queue_time += while_timer.toc();
-//--------------------------- Queue Time --------------------------------------//
-        }
-      }
-    } else {  // vertex without any neighbor
-      size_t pos = neighbor_list.size();
-
-//--------------------------- Hash Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      neigh_pos[dst_id] = pos;
-      hash_lookup_time += while_timer.toc();
-//--------------------------- Hash Time --------------------------------------//
-
-//--------------------------- Vector Push Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      neighbor_list.push_back(0);
-      neighbor_list_push_time += while_timer.toc();
-//--------------------------- Vector Push Time --------------------------------------//
-
-//--------------------------- Hash Time --------------------------------------//
-      while_timer.reset();
-      while_timer.tic();
-      sub_ver_mp[cur_node.vertex_id] = cur_node.level;
-      hash_lookup_time += while_timer.toc();
-//--------------------------- Hash Time --------------------------------------//
     }
-    sub_vertices_count++;
-    while_timer.reset();
-    while_timer.tic();
+    CHECK_EQ(tmp_sampled_src_list.size(), tmp_sampled_edge_list.size());
+    size_t pos = neighbor_list.size();
+    neigh_pos[dst_id] = pos;
+    // First we push the size of neighbor vector
+    neighbor_list.push_back(tmp_sampled_edge_list.size());
+    // Then push the vertices
+    for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+      neighbor_list.push_back(tmp_sampled_src_list[i]);
+    }
+    // Finally we push the edge list
+    for (size_t i = 0; i < tmp_sampled_edge_list.size(); ++i) {
+      neighbor_list.push_back(tmp_sampled_edge_list[i]);
+    }
+    num_edges += tmp_sampled_src_list.size();
+    for (size_t i = 0; i < tmp_sampled_src_list.size(); ++i) {
+      auto ret = sub_ver_mp.find(tmp_sampled_src_list[i]);
+      if (ret == sub_ver_mp.end()) {
+        ver_node new_node;
+        new_node.vertex_id = tmp_sampled_src_list[i];
+        new_node.level = cur_node.level + 1;
+        if (new_node.level < num_hops) {
+          node_queue.push(new_node);
+        }
+        // If we have sampled the max number of vertices, we have to stop.
+        if (sub_ver_mp.size() >= max_num_vertices)
+          break;
+        // We need to add the neighbor in the hashtable here. This ensures that
+        // the vertex in the queue is unique. If we see a vertex before, we don't
+        // need to add it to the queue again.
+        sub_ver_mp[new_node.vertex_id] = new_node.level;
+        // This vertex is in the last level. It doesn't have edges.
+        // If a vertex doesn't contain an edge, we don't need to add the vertex
+        // in neigh_pos or neighbor_list.
+      }
+    }
     node_queue.pop();
-    queue_time += while_timer.toc();
   }
+  if (!node_queue.empty())
+    LOG(WARNING) << "The sampling is truncated because we have reached the max number of vertices";
 
-//--------------------------- Copy sub-id Time --------------------------------------//
-  timer.reset();
-  timer.tic();
   // Copy sub_ver_mp to output[0]
-  size_t idx = 0;
-  for (auto& data : sub_ver_mp) {
-    *(out+idx) = data.first;
-    idx++;
-  }
+  // Copy layer
+  std::vector<std::pair<dgl_id_t, dgl_id_t> > order_map;
+  order_map.reserve(sub_ver_mp.size());
+  for (auto& data : sub_ver_mp)
+    order_map.push_back(std::pair<dgl_id_t, dgl_id_t>(data.first, data.second));
   size_t num_vertices = sub_ver_mp.size();
-  std::sort(out, out + num_vertices);
-  // The rest data will be set to -1
-  for (dgl_id_t i = idx; i < max_num_vertices; ++i) {
-    *(out+i) = -1;
+  std::sort(order_map.begin(), order_map.end(), [](const std::pair<dgl_id_t, dgl_id_t> &a1, std::pair<dgl_id_t, dgl_id_t> &a2) {
+    return a1.first < a2.first;
+  });
+  for (size_t i = 0; i < order_map.size(); i++) {
+    out[i] = order_map[i].first;
+    out_layer[i] = order_map[i].second;
+  }
+  for (size_t i = order_map.size(); i < max_num_vertices; i++) {
+    out[i] = -1;
+    out_layer[i] = -1;
   }
   // The last element stores the actual
   // number of vertices in the subgraph.
   out[max_num_vertices] = sub_ver_mp.size();
-  copy_sub_id += timer.toc();
-//--------------------------- Copy sub-id Time --------------------------------------//
 
   // Copy sub_probability
   if (sub_prob != nullptr) {
-    for (dgl_id_t i = 0; i < max_num_vertices; ++i) {
+    for (size_t i = 0; i < max_num_vertices; ++i) {
       dgl_id_t idx = out[i];
       if (idx != -1) {
         sub_prob[i] = probability[idx];
@@ -820,25 +687,6 @@ static void SampleSubgraph(const NDArray &csr,
       }
     }
   }
-
-//--------------------------- Copy layer Time --------------------------------------//
-  timer.reset();
-  timer.tic();
-  // Copy layer
-  for (dgl_id_t i = 0; i < max_num_vertices; ++i) {
-    dgl_id_t idx = out[i];
-    if (idx != -1) {
-      out_layer[i] = sub_ver_mp[idx];
-    } else {
-      out_layer[i] = -1;
-    }
-  }
-  copy_layer += timer.toc();
-//--------------------------- Copy layer Time --------------------------------------//
-
-//--------------------------- Copy sub-csr Time --------------------------------------//
-  timer.reset();
-  timer.tic();
   // Construct sub_csr_graph
   TShape shape_1(1);
   TShape shape_2(1);
@@ -852,11 +700,32 @@ static void SampleSubgraph(const NDArray &csr,
   dgl_id_t* indptr_out = sub_csr.aux_data(0).dptr<dgl_id_t>();
   indptr_out[0] = 0;
   size_t collected_nedges = 0;
+
+  // This might look weird. However, it should be able to reduce hashtable
+  // lookup by a lot (depends on how many neighbors we sample).
+  // By putting vertices with neighbors in a sorted array, we can easily
+  // find which vertices have neighbors.
+  std::vector<std::pair<dgl_id_t, dgl_id_t> > order_map_with_neighs;
+  order_map_with_neighs.reserve(neigh_pos.size());
+  for (auto& data : neigh_pos)
+    order_map_with_neighs.push_back(std::pair<dgl_id_t, dgl_id_t>(data.first, data.second));
+  std::sort(order_map_with_neighs.begin(), order_map_with_neighs.end(), [](const std::pair<dgl_id_t, dgl_id_t> &a1, std::pair<dgl_id_t, dgl_id_t> &a2) {
+    return a1.first < a2.first;
+  });
+
+  size_t idx_with_neigh = 0;
   for (size_t i = 0; i < num_vertices; i++) {
     dgl_id_t dst_id = *(out + i);
-    size_t pos = neigh_pos[dst_id];
-    size_t edge_size = neighbor_list[pos];
-    if (edge_size != 0) {
+    // If a vertex is in sub_ver_mp but not in neigh_pos, this vertex must not
+    // have edges.
+    size_t edge_size = 0;
+    if (idx_with_neigh < order_map_with_neighs.size()
+        && dst_id == order_map_with_neighs[idx_with_neigh].first) {
+      size_t pos = order_map_with_neighs[idx_with_neigh].second;
+      CHECK_LT(pos, neighbor_list.size());
+      edge_size = neighbor_list[pos];
+      CHECK_LE(pos + edge_size * 2 + 1, neighbor_list.size());
+
       std::copy_n(neighbor_list.begin() + pos + 1,
                   edge_size,
                   col_list_out + collected_nedges);
@@ -864,24 +733,13 @@ static void SampleSubgraph(const NDArray &csr,
                   edge_size,
                   val_list_out + collected_nedges);
       collected_nedges += edge_size;
+      idx_with_neigh++;
     }
     indptr_out[i+1] = indptr_out[i] + edge_size;
   }
-  for (dgl_id_t i = num_vertices+1; i <= max_num_vertices; ++i) {
+  for (size_t i = num_vertices+1; i <= max_num_vertices; ++i) {
     indptr_out[i] = indptr_out[i-1];
   }
-  copy_sub_csr += timer.toc();
-
-//--------------------------- Copy sub-csr Time --------------------------------------//
-
-  std::cout << "init time: " << init_time / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "sample time: " << sample_time / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "hash-lookup time: " << hash_lookup_time / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "neighbor_list push time: " << neighbor_list_push_time / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "queue push-pop time: " << queue_time / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "copy sub-id time: " << copy_sub_id / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "copy layer time: " << copy_layer / 1000.0 / 1000.0 << "(mill sec)\n";
-  std::cout << "copy sub-csr time: " << copy_sub_csr / 1000.0 / 1000.0 << "(mill sec)\n";
 }
 
 /*
@@ -916,11 +774,8 @@ static void CSRNeighborUniformSampleComputeExCPU(const nnvm::NodeAttrs& attrs,
 NNVM_REGISTER_OP(_contrib_dgl_csr_neighbor_uniform_sample)
 .describe(R"code(This operator samples sub-graph from a csr graph via an
 uniform probability. 
-
 Example:
-
    .. code:: python
-
   shape = (5, 5)
   data_np = np.array([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20], dtype=np.int64)
   indices_np = np.array([1,2,3,4,0,2,3,4,0,1,3,4,0,1,2,4,0,1,2,3], dtype=np.int64)
@@ -929,21 +784,18 @@ Example:
   a.asnumpy()
   seed = mx.nd.array([0,1,2,3,4], dtype=np.int64)
   out = mx.nd.contrib.dgl_csr_neighbor_uniform_sample(a, seed, num_args=2, num_hops=1, num_neighbor=2, max_num_vertices=5)
-
   out[0]
   [0 1 2 3 4 5]
   <NDArray 6 @cpu(0)>
-
   out[1].asnumpy()
   array([[ 0,  1,  0,  3,  0],
          [ 5,  0,  0,  7,  0],
          [ 9,  0,  0, 11,  0],
          [13,  0, 15,  0,  0],
          [17,  0, 19,  0,  0]])
-
   out[2]
   [0 0 0 0 0]
-<NDArray 5 @cpu(0)>
+  <NDArray 5 @cpu(0)>
 )code" ADD_FILELINE)
 .set_attr_parser(ParamParser<NeighborSampleParam>)
 .set_num_inputs([](const NodeAttrs& attrs) {
@@ -1001,11 +853,8 @@ static void CSRNeighborNonUniformSampleComputeExCPU(const nnvm::NodeAttrs& attrs
 NNVM_REGISTER_OP(_contrib_dgl_csr_neighbor_non_uniform_sample)
 .describe(R"code(This operator samples sub-graph from a csr graph via an
 uniform probability. 
-
 Example:
-
    .. code:: python
-
   shape = (5, 5)
   prob = mx.nd.array([0.9, 0.8, 0.2, 0.4, 0.1], dtype=np.float32)
   data_np = np.array([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20], dtype=np.int64)
@@ -1014,22 +863,18 @@ Example:
   a = mx.nd.sparse.csr_matrix((data_np, indices_np, indptr_np), shape=shape)
   seed = mx.nd.array([0,1,2,3,4], dtype=np.int64)
   out = mx.nd.contrib.dgl_csr_neighbor_non_uniform_sample(a, prob, seed, num_args=3, num_hops=1, num_neighbor=2, max_num_vertices=5)
-
   out[0]
   [0 1 2 3 4 5]
   <NDArray 6 @cpu(0)>
-
   out[1].asnumpy()
   array([[ 0,  1,  2,  0,  0],
          [ 5,  0,  6,  0,  0],
          [ 9, 10,  0,  0,  0],
          [13, 14,  0,  0,  0],
          [ 0, 18, 19,  0,  0]])
-
   out[2]
   [0.9 0.8 0.2 0.4 0.1]
   <NDArray 5 @cpu(0)>
-
   out[3]
   [0 0 0 0 0]
   <NDArray 5 @cpu(0)>
@@ -1272,11 +1117,8 @@ sets of vertices as input. For each set of vertices, it returns a pair
 of CSR matrices if return_mapping is True: the first matrix contains edges
 with new edge Ids, the second matrix contains edges with the original
 edge Ids.
-
 Example:
-
    .. code:: python
-
      x=[[1, 0, 0, 2],
        [3, 0, 4, 0],
        [0, 5, 0, 0],
@@ -1289,7 +1131,6 @@ Example:
        [[1, 0, 0],
         [3, 0, 4],
         [0, 5, 0]]
-
 )code" ADD_FILELINE)
 .set_attr_parser(ParamParser<DGLSubgraphParam>)
 .set_num_inputs([](const NodeAttrs& attrs) {
@@ -1455,22 +1296,17 @@ NNVM_REGISTER_OP(_contrib_edge_id)
 stored in a CSR matrix (the value of the CSR stores the edge Id of the graph).
 output[i] = input[u[i], v[i]] if there is an edge between u[i] and v[i]],
 otherwise output[i] will be -1. Both u and v should be 1D vectors.
-
 Example:
-
    .. code:: python
-
       x = [[ 1, 0, 0 ],
            [ 0, 2, 0 ],
            [ 0, 0, 3 ]]
       u = [ 0, 0, 1, 1, 2, 2 ]
       v = [ 0, 1, 1, 2, 0, 2 ]
       edge_id(x, u, v) = [ 1, -1, 2, -1, -1, 3 ]
-
 The storage type of ``edge_id`` output depends on storage types of inputs
   - edge_id(csr, default, default) = default
   - default and rsp inputs are not supported
-
 )code" ADD_FILELINE)
 .set_num_inputs(3)
 .set_num_outputs(1)
@@ -1530,11 +1366,8 @@ NNVM_REGISTER_OP(_contrib_dgl_adjacency)
 .describe(R"code(This operator converts a CSR matrix whose values are edge Ids
 to an adjacency matrix whose values are ones. The output CSR matrix always has
 the data value of float32.
-
 Example:
-
    .. code:: python
-
   x = [[ 1, 0, 0 ],
        [ 0, 2, 0 ],
        [ 0, 0, 3 ]]
@@ -1542,7 +1375,6 @@ Example:
       [[ 1, 0, 0 ],
        [ 0, 1, 0 ],
        [ 0, 0, 1 ]]
-
 )code" ADD_FILELINE)
 .set_num_inputs(1)
 .set_num_outputs(1)
@@ -1707,11 +1539,8 @@ dgl_csr_neighbor_uniform_sample and dgl_csr_neighbor_non_uniform_sample.
 The CSR matrices generated by these two operators may have many empty
 rows at the end and many empty columns. This operator removes these
 empty rows and empty columns.
-
 Example:
-
    .. code:: python
-
   shape = (5, 5)
   data_np = np.array([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20], dtype=np.int64)
   indices_np = np.array([1,2,3,4,0,2,3,4,0,1,3,4,0,1,2,4,0,1,2,3], dtype=np.int64)
@@ -1724,14 +1553,12 @@ Example:
   subg = out[1]
   compact = mx.nd.contrib.dgl_graph_compact(subg, subg_v,
           graph_sizes=(subg_v[-1].asnumpy()[0]), return_mapping=False)
-
   compact.asnumpy()
   array([[0, 0, 0, 1, 0],
          [2, 0, 3, 0, 0],
          [0, 4, 0, 0, 5],
          [0, 6, 0, 0, 7],
          [8, 9, 0, 0, 0]])
-
 )code" ADD_FILELINE)
 .set_attr_parser(ParamParser<SubgraphCompactParam>)
 .set_num_inputs([](const NodeAttrs& attrs) {
