@@ -651,8 +651,10 @@ static void SampleSubgraph(const NDArray &csr,
     }
     node_queue.pop();
   }
+  /*
   if (!node_queue.empty())
     LOG(WARNING) << "The sampling is truncated because we have reached the max number of vertices";
+  */
 
   // Copy sub_ver_mp to output[0]
   // Copy layer
